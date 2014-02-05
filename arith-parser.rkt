@@ -10,6 +10,7 @@
 (define-lex-abbrev <minus> #\-)
 (define-lex-abbrev <times> #\*)
 (define-lex-abbrev <div>   #\/)
+(define-lex-abbrev <exp>   #\^)
 
 (define-lex-abbrev <pls_mns>
   (union <plus> <minus>))
@@ -51,7 +52,7 @@
 ; LEXER
 ;----------------
 (define-tokens group-a (VAR NUM))
-(define-empty-tokens group-b (PLUS MINUS TIMES DIV))
+(define-empty-tokens group-b (PLUS MINUS TIMES DIV EXP))
 (define-empty-tokens group-c (LPAR RPAR EOF))
 
 (define arith-lexer
@@ -62,6 +63,7 @@
    [<minus> (token-MINUS)]
    [<times> (token-TIMES)]
    [<div>   (token-DIV)]
+   [<exp>   (token-EXP)]
    [#\( (token-LPAR)]
    [#\) (token-RPAR)]
    [whitespace (arith-lexer input-port)]
@@ -73,19 +75,22 @@
    (start op-expr)
    (end EOF)
    (error void)
-   (precs (left PLUS MINUS) (left TIMES DIV))
+   (precs (left PLUS MINUS) (left TIMES DIV) (left EXP))
    (grammar
     ; atom ::= NUM
     ;       |  VAR
     (atom ((NUM) $1)
           ((VAR) $1))
     ; op-expr ::= op-expr OP op-expr
+    ;          |  -expr [with some precedence setup]
     ;          |  par-expr
     ;          |  atom
     (op-expr ((op-expr PLUS  op-expr) `(+ ,$1 ,$3))
              ((op-expr MINUS op-expr) `(- ,$1 ,$3))
              ((op-expr TIMES op-expr) `(* ,$1 ,$3))
              ((op-expr DIV   op-expr) `(/ ,$1 ,$3))
+             ((op-expr EXP   op-expr) `(^ ,$1 ,$3))
+             ((MINUS op-expr) (prec TIMES) `(- ,$2))  ; Effectively treated as (* -1 op-expr), so precedence equals *
              ((par-expr) $1)
              ((atom) $1))
     ; par-expr ::= (expr)
