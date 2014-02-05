@@ -52,7 +52,7 @@
 ;----------------
 (define-tokens group-a (VAR NUM))
 (define-empty-tokens group-b (PLUS MINUS TIMES DIV))
-(define-empty-tokens group-c (LPAR RPAR DIV))
+(define-empty-tokens group-c (LPAR RPAR EOF))
 
 (define arith-lexer
   (lexer
@@ -69,20 +69,27 @@
 
 (define arith-parser
   (parser
-   (tokens group-a group-b)
-   (start expr)
+   (tokens group-a group-b group-c)
+   (start op-expr)
    (end EOF)
    (error void)
-   (precs (left TIMES DIV) (left PLUS MINUS))
+   (precs (left PLUS MINUS) (left TIMES DIV))
    (grammar
-    ; expr ::= expr op expr
-    ;       |  num
-    (expr ((expr PLUS expr)  `(+ ,$1 ,$3))
-          ((expr MINUS expr) `(- ,$1 ,$3))
-          ((expr TIMES expr) `(* ,$1 ,$3))
-          ((expr DIV expr)   `(/ ,$1 ,$3))
-          ((NUM) $1)
-          ((VAR) $1)))))
+    ; atom ::= NUM
+    ;       |  VAR
+    (atom ((NUM) $1)
+          ((VAR) $1))
+    ; op-expr ::= op-expr OP op-expr
+    ;          |  par-expr
+    ;          |  atom
+    (op-expr ((op-expr PLUS  op-expr) `(+ ,$1 ,$3))
+             ((op-expr MINUS op-expr) `(- ,$1 ,$3))
+             ((op-expr TIMES op-expr) `(* ,$1 ,$3))
+             ((op-expr DIV   op-expr) `(/ ,$1 ,$3))
+             ((par-expr) $1)
+             ((atom) $1))
+    ; par-expr ::= (expr)
+    (par-expr ((LPAR op-expr RPAR) $2)))))
 
 ;--------------
 ; TESTS
