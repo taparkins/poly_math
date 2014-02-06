@@ -72,29 +72,97 @@
 (define arith-parser
   (parser
    (tokens group-a group-b group-c)
-   (start op-expr)
+   (start Npm-expr)
    (end EOF)
    (error void)
    (precs (left PLUS MINUS) (left TIMES DIV) (left EXP))
+   ; Idea -- Two possible states in the tree:
+   ;   1) Nblah -- this expression may possibly expand with a leading unary minus
+   ;   2) blah  -- this expression CANNOT expand with a leading unary minus
    (grammar
     ; atom ::= NUM
     ;       |  VAR
+    ;       |  (Nexpr)
     (atom ((NUM) $1)
-          ((VAR) $1))
-    ; op-expr ::= op-expr OP op-expr
-    ;          |  -expr [with some precedence setup]
-    ;          |  par-expr
-    ;          |  atom
-    (op-expr ((op-expr PLUS  op-expr) `(+ ,$1 ,$3))
-             ((op-expr MINUS op-expr) `(- ,$1 ,$3))
-             ((op-expr TIMES op-expr) `(* ,$1 ,$3))
-             ((op-expr DIV   op-expr) `(/ ,$1 ,$3))
-             ((op-expr EXP   op-expr) `(^ ,$1 ,$3))
-             ((MINUS op-expr) (prec TIMES) `(- ,$2))  ; Effectively treated as (* -1 op-expr), so precedence equals *
-             ((par-expr) $1)
-             ((atom) $1))
-    ; par-expr ::= (expr)
-    (par-expr ((LPAR op-expr RPAR) $2)))))
+          ((VAR) $1)
+          ((LPAR Npm-expr RPAR) $2))
+    ; Natom ::= atom
+    ;        |  -atom
+    (Natom ((atom) $1)
+           ((MINUS atom) `(- ,$2)))
+    
+    ; pm-expr ::= pm-expr + td-expr
+    ;          |  pm-expr - td-expr
+    ;          |  td-expr
+    (pm-expr ((pm-expr PLUS  td-expr) `(+ ,$1 ,$3))
+             ((pm-expr MINUS td-expr) `(- ,$1 ,$3))
+             ((td-expr) $1))
+    
+    ; td-expr ::= td-expr * exp-expr
+    ;          |  td-expr / exp-expr
+    ;          |  td-expr exp-expr         (implicit multiplication on adjascent concatenation)
+    ;          |  exp-expr
+    (td-expr ((td-expr TIMES exp-expr) `(* ,$1 ,$3))
+             ((td-expr DIV   exp-expr) `(/ ,$1 ,$3))
+             ((td-expr exp-expr) `(* ,$1 ,$2))
+             ((exp-expr) $1))
+    
+    ; exp-expr ::= exp-expr ^ Natom
+    ;           |  atom
+    (exp-expr ((exp-expr EXP Natom) `(^ ,$1 ,$3))
+              ((atom) $1))
+    
+    ; Npm-expr ::= Npm-expr + td-expr
+    ;           |  Npm-expr - td-expr
+    ;           |  Ntd-expr
+    (Npm-expr ((Npm-expr PLUS  td-expr) `(+ ,$1 ,$3))
+              ((Npm-expr MINUS td-expr) `(- ,$1 ,$3))
+              ((Ntd-expr) $1))
+    
+    ; Ntd-expr ::= Ntd-expr * exp-expr
+    ;           |  Ntd-expr / exp-expr
+    ;           |  Ntd-expr exp-expr         (implicit multiplication on adjascent concatenation)
+    ;           |  Nexp-expr
+    (Ntd-expr ((Ntd-expr TIMES exp-expr) `(* ,$1 ,$3))
+              ((Ntd-expr DIV   exp-expr) `(/ ,$1 ,$3))
+              ((Ntd-expr exp-expr) `(* ,$1 ,$2))
+              ((Nexp-expr) $1))
+    
+    ; Nexp-expr ::= Nexp-expr ^ Natom
+    ;            |  Natom
+    (Nexp-expr ((Nexp-expr EXP Natom) `(^ ,$1 ,$3))
+               ((Natom) $1)))))
+
+;-----------------------
+; TREE TRANSFORMS
+;-----------------------
+(define (elim-unary parsed)
+  (match parsed
+    [`(- ,$1) `(* -1 ,(elim-unary $1))]
+    [`(,op ,$1 ,$2) `(,op ,(elim-unary $1) ,(elim-unary $2))]
+    [x x]))
+
+(define (elim-constants parsed)
+  ; If we can't immediately reduce, we'll take a second shot after recurring:
+  (define (op-reduce op a b)
+    (cond
+      [(and (number? a) (number? b)) (op a b)]
+      [else 
+       (match op
+         [+ `(+ ,a ,b)]
+         [- `(- ,a ,b)]
+         [* `(* ,a ,b)]
+         [/ `(/ ,a ,b)]
+         [^ `(expt ,a ,b)]
+         [x `(,x ,a ,b)])]))
+    
+  (match parsed
+    [`(+ ,a ,b) (op-reduce + (elim-constants a) (elim-constants b))]
+    [`(- ,a ,b) (op-reduce - (elim-constants a) (elim-constants b))]
+    [`(* ,a ,b) (op-reduce * (elim-constants a) (elim-constants b))]
+    [`(/ ,a ,b) (op-reduce / (elim-constants a) (elim-constants b))]
+    [`(^ ,a ,b) (op-reduce expt (elim-constants a) (elim-constants b))]
+    [x x]))
 
 ;--------------
 ; TESTS
