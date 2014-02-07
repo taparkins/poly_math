@@ -151,6 +151,32 @@
     [`(^ ,a ,b) `(^ ,(elim-minus-div a) ,(elim-minus-div b))]
     [x x]))
 
+(define (distribute parsed)
+  (define (distribute* args)
+    (match args
+      [`((+ ,a1 ,a2) (+ ,b1 ,b2)) `(+ (* ,a1 ,b1) (+ (* ,a1 ,b2) (+ (* ,a2 ,b1) (* ,a2 ,b2))))]
+      [`(,(? number? a) (+ ,b1 ,b2)) `(+ (* ,a ,b1) (* ,a ,b2))]
+      [`((+ ,a1 ,a2) ,(? number? b)) `(+ (* ,b ,a1) (* ,b ,a1))]
+      [`(,a ,b) `(* ,a ,b)]))
+  
+  (define (distribute^ args)
+    (match args
+      [`(,x ,(? number? n))
+       ; =>
+       (define (expt n acc)
+         (cond
+           [(= n 0) acc]
+           [(< n 0) 1]
+           [else (expt (- n 1) (cons '* (cons x `(,acc))))]))
+       (expt (- n 1) x)]
+      [`(,a ,b) `(^ ,a ,b)]))
+  
+  (match parsed
+    [`(+ ,a ,b) `(+ ,(distribute a) ,(distribute b))] ; TODO?
+    [`(^ ,a ,b) (distribute^ `(,(distribute a) ,(distribute b)))]
+    [`(* ,a ,b) (distribute* `(,(distribute a) ,(distribute b)))]
+    [x x]))
+
 (define (tree-crusher parsed)
   (define (crush+ args)
     (foldl (lambda (args acc)
@@ -173,43 +199,108 @@
     [`(+ ,a ...) (crush+ (map tree-crusher a))]
     [`(* ,a ...) (crush* (map tree-crusher a))]
     [`(^ ,a ,b) `(^ ,(tree-crusher a) ,(tree-crusher b))]
+    [(? symbol? x) `(^ ,x 1)]
     [x x]))
 
 (define (compress-chains parsed)
   (define (compress+ args)
-    (let [(val (foldl (lambda (args acc)
-                        (match args
-                          [(? number? n) `(,(+ (car acc) n) ,(cadr acc))]
-                          [x `(,(car acc) ,(append (cadr acc) (list x)))]))
-                      '(0 ()) args))]
-      (match val
-        [`(0 ,vars) `(+ ,@vars)]
-        [`(0 (,x)) x]
-        [`(,n ()) n]
-        [`(,n ,vars) `(+ ,n ,@vars)])))
+    (let [(val (foldl (lambda (arg acc)
+                        (let [(int-val (car acc))
+                              (mlt-val (cadr acc))]
+                          (match arg
+                            [(? number? n)
+                             ; =>
+                             `(,(+ int-val n) ,mlt-val)]
+                            [`(* ,(? number? k) ,x)
+                             ; =>
+                             `(,int-val ,(hash-set mlt-val x (+ (hash-ref mlt-val x 0) k)))]
+                            [`(* ,x ,(? number? k))
+                             ; =>
+                             `(,int-val ,(hash-set mlt-val x (+ (hash-ref mlt-val x 0) k)))]
+                            [x 
+                             ; =>
+                             `(,int-val ,(hash-set mlt-val x (+ (hash-ref mlt-val x 0) 1)))])))
+                      `(0 ,#hash()) args))]
+      (let [(int-val (car val)) (mlt-val (cadr val))]
+        (cond
+          [(= int-val 0)
+           ; =>
+           (match mlt-val
+             [(hash-table) 0]
+             [(hash-table (key val)) `(* ,val ,key)]
+             [(hash-table (key val) ...) `(+ ,@(map (lambda (a b)
+                                                      `(* ,b ,a))
+                                                    key val))])]
+          [else
+           ; =>
+           (match mlt-val
+             [(hash-table) int-val]
+             [(hash-table (key val) ...) `(+ ,int-val ,@(map (lambda (a b)
+                                                               `(* ,b ,a))
+                                                             key val))])]))))
   
   (define (compress* args)
-    (let [(val (foldl (lambda (args acc)
-                        (match args
-                          [(? number? n) `(,(* (car acc) n) ,(cadr acc))]
-                          [x `(,(car acc) ,(append (cadr acc) (list x)))]))
-                      '(1 ()) args))]
-      (match val
-        [`(1 ,vars) `(* ,@vars)]
-        [`(1 (,x)) x]
-        [`(,n ()) n]
-        [`(,n ,vars) `(* ,n ,@vars)])))
+    (let [(val (foldl 
+                (lambda (arg acc)
+                  (let [(int-val (car acc))
+                        (exp-val (cadr acc))]
+                        (match arg
+                          [(? number? n) 
+                           ; =>
+                           `(,(* int-val n) ,exp-val)]
+                          [`(^ ,x ,(? number? y))
+                           ; =>
+                           `(,int-val ,(hash-set exp-val x (+ (hash-ref exp-val x 0) y)))]
+                          [x
+                           ; =>
+                           `(,int-val ,(hash-set exp-val x (+ (hash-ref exp-val x 0) 1)))])))
+                      `(1 ,#hash()) args))]
+      (let [(int-val (car val)) (exp-val (cadr val))]
+        (cond
+          [(= int-val 0) 0]
+          [(and (= int-val 1) (= (hash-count exp-val) 0)) 1]
+          [(= int-val 1)
+           (match exp-val
+             [(hash-table) 1]
+             [(hash-table (key val)) `(^ ,key ,val)]
+             [(hash-table (key val) ...) `(* ,@(map (lambda (a b)
+                                                      `(^ ,a ,b))
+                                                    key val))])]
+          [else
+           (match exp-val
+             [(hash-table) int-val]
+             [(hash-table (key val) ...) `(* ,int-val ,@(map (lambda (a b)
+                                                               `(^ ,a ,b))
+                                                             key val))])]))))
+;      (match val
+;        [`(1 ,(hash-table (key 1)) x]
+;        [`(1 ,(hash-table (key val) ...)) `(* ,@(map (lambda (a b)
+;                                                      `(^ ,a ,b))))]
+;        [`(,n ,(hash-table)) n]
+;        [`(,n ,vars) `(* ,n ,@vars)])))
   
   (define (compress^ args)
     (match args
       [`(,(? number? a) ,(? number? b)) (expt a b)]
+      ;[`((^ ,x ,y) ,z) `(^ ,x ,(compress-chains `(* ,y ,z)))]
       [`(,a ,b) `(^ ,a ,b)]))
   
   (match parsed
     [`(+ ,a ...) (compress+ (map compress-chains a))]
     [`(* ,a ...) (compress* (map compress-chains a))]
     [`(^ ,a ...) (compress^ (map compress-chains a))]
+    ;[(? symbol? x) `(^ ,x 1)]
     [x x]))
+
+;(define (join-symbols parsed)
+;  (define (join+ args)
+;    (let [(symbols-table (make-hash))]
+;      (foldl (lambda (arg acc)
+;               (match arg
+;                 [(? number? n) (hash-set! acc `((x) 0) (+ (hash-ref acc `((x) 0) 0) n))]
+;                 [(? symbol? x) (hash-set! acc `((,x) 1) (+ (hash-ref acc `((,x) 1) 0) 1))]
+;                 [`(^ ,(? symbol? x) ,y) (hash-set! acc `((,x) ,y) (+ (hash-ref acc `((,x) ,y) 0) 1))]
+;                 [`(* ,(? number? n) ,vars ...)
 
 ;-------------------
 ; INPUT YAYAY
@@ -223,10 +314,12 @@
           (pretty-write unary-stripped)
           (let [(min-div-stripped (elim-minus-div unary-stripped))]
             (pretty-write min-div-stripped)
-            (let [(crushed (tree-crusher min-div-stripped))]
-              (pretty-write crushed)
-              (let [(compressed (compress-chains crushed))]
-                (pretty-write compressed)))))))))
+            (let [(distributed (distribute min-div-stripped))]
+              (pretty-write distributed)
+              (let [(crushed (tree-crusher distributed))]
+                (pretty-write crushed)
+                (let [(compressed (compress-chains crushed))]
+                  (pretty-write compressed))))))))))
 
 ;--------------
 ; TESTS
