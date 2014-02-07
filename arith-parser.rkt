@@ -211,33 +211,37 @@
                             [(? number? n)
                              ; =>
                              `(,(+ int-val n) ,mlt-val)]
-                            [`(* ,(? number? k) ,x)
+                            [`(* ,y ... ,(? number? k) ,x ...)
                              ; =>
-                             `(,int-val ,(hash-set mlt-val x (+ (hash-ref mlt-val x 0) k)))]
-                            [`(* ,x ,(? number? k))
-                             ; =>
-                             `(,int-val ,(hash-set mlt-val x (+ (hash-ref mlt-val x 0) k)))]
+                             `(,int-val ,(foldl (lambda (x acc) 
+                                                  (hash-set mlt-val x (+ (hash-ref mlt-val x 0) k)))
+                                                (cadr acc) (append y x)))]
                             [x 
                              ; =>
                              `(,int-val ,(hash-set mlt-val x (+ (hash-ref mlt-val x 0) 1)))])))
                       `(0 ,#hash()) args))]
-      (let [(int-val (car val)) (mlt-val (cadr val))]
+      (let [(int-val (car val)) 
+            (mlt-val 
+             (filter
+              (lambda (x) (not (= (cadr x) 0)))
+              (match (cadr val)
+                [(hash-table (key val) ...) (map list key val)])))]
         (cond
           [(= int-val 0)
            ; =>
            (match mlt-val
-             [(hash-table) 0]
-             [(hash-table (key val)) `(* ,val ,key)]
-             [(hash-table (key val) ...) `(+ ,@(map (lambda (a b)
-                                                      `(* ,b ,a))
-                                                    key val))])]
+             ['() 0]
+             [`((,key ,val)) `(* ,val ,key)]
+             [`((,key ,val) ...) `(+ ,@(map (lambda (a b)
+                                              `(* ,b ,a))
+                                            key val))])]
           [else
            ; =>
            (match mlt-val
-             [(hash-table) int-val]
-             [(hash-table (key val) ...) `(+ ,int-val ,@(map (lambda (a b)
-                                                               `(* ,b ,a))
-                                                             key val))])]))))
+             ['() int-val]
+             [`((,key ,val) ...) `(+ ,int-val ,@(map (lambda (a b)
+                                                       `(* ,b ,a))
+                                                     key val))])]))))
   
   (define (compress* args)
     (let [(val (foldl 
@@ -255,23 +259,27 @@
                            ; =>
                            `(,int-val ,(hash-set exp-val x (+ (hash-ref exp-val x 0) 1)))])))
                       `(1 ,#hash()) args))]
-      (let [(int-val (car val)) (exp-val (cadr val))]
+      (let [(int-val (car val))
+            (exp-val 
+             (filter
+              (lambda (x) (not (= (cadr x) 0)))
+              (match (cadr val)
+                [(hash-table (key val) ...) (map list key val)])))]
         (cond
           [(= int-val 0) 0]
-          [(and (= int-val 1) (= (hash-count exp-val) 0)) 1]
           [(= int-val 1)
            (match exp-val
-             [(hash-table) 1]
-             [(hash-table (key val)) `(^ ,key ,val)]
-             [(hash-table (key val) ...) `(* ,@(map (lambda (a b)
-                                                      `(^ ,a ,b))
-                                                    key val))])]
+             ['() 1]
+             [`((,key ,val)) `(^ ,key ,val)]
+             [`((,key ,val) ...) `(* ,@(map (lambda (a b)
+                                              `(^ ,a ,b))
+                                            key val))])]
           [else
            (match exp-val
-             [(hash-table) int-val]
-             [(hash-table (key val) ...) `(* ,int-val ,@(map (lambda (a b)
-                                                               `(^ ,a ,b))
-                                                             key val))])]))))
+             ['() int-val]
+             [`((,key ,val) ...) `(* ,int-val ,@(map (lambda (a b)
+                                                       `(^ ,a ,b))
+                                                     key val))])]))))
 ;      (match val
 ;        [`(1 ,(hash-table (key 1)) x]
 ;        [`(1 ,(hash-table (key val) ...)) `(* ,@(map (lambda (a b)
