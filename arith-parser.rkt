@@ -142,27 +142,73 @@
     [`(,op ,$1 ,$2) `(,op ,(elim-unary $1) ,(elim-unary $2))]
     [x x]))
 
-(define (elim-constants parsed)
-  ; If we can't immediately reduce, we'll take a second shot after recurring:
-  (define (op-reduce op a b)
-    (cond
-      [(and (number? a) (number? b)) (op a b)]
-      [else 
-       (match op
-         [+ `(+ ,a ,b)]
-         [- `(- ,a ,b)]
-         [* `(* ,a ,b)]
-         [/ `(/ ,a ,b)]
-         [^ `(expt ,a ,b)]
-         [x `(,x ,a ,b)])]))
-    
+(define (elim-minus-div parsed)
   (match parsed
-    [`(+ ,a ,b) (op-reduce + (elim-constants a) (elim-constants b))]
-    [`(- ,a ,b) (op-reduce - (elim-constants a) (elim-constants b))]
-    [`(* ,a ,b) (op-reduce * (elim-constants a) (elim-constants b))]
-    [`(/ ,a ,b) (op-reduce / (elim-constants a) (elim-constants b))]
-    [`(^ ,a ,b) (op-reduce expt (elim-constants a) (elim-constants b))]
+    [`(- ,a ,b) `(+ ,(elim-minus-div a) (* -1 ,(elim-minus-div b)))]
+    [`(/ ,a ,b) `(* ,(elim-minus-div a) (^ ,(elim-minus-div b) -1))]
+    [`(+ ,a ,b) `(+ ,(elim-minus-div a) ,(elim-minus-div b))]
+    [`(* ,a ,b) `(* ,(elim-minus-div a) ,(elim-minus-div b))]
+    [`(^ ,a ,b) `(^ ,(elim-minus-div a) ,(elim-minus-div b))]
     [x x]))
+
+(define (tree-crusher parsed)
+  (define (crush+ args)
+    (foldl (lambda (args acc)
+             (match args
+               [(? number? v) (append acc (list v))]
+               [(? symbol? v) (append acc (list v))]
+               [`(+ ,a ...) (append acc a)]
+               [x (append acc (list x))]))
+           `(+) args))
+  (define (crush* args)
+    (foldl (lambda (args acc)
+             (match args
+               [(? number? v) (append acc (list v))]
+               [(? symbol? v) (append acc (list v))]
+               [`(* ,a ...) (append acc a)]
+               [x (append acc (list x))]))
+           `(*) args))
+      
+  (match parsed
+    [`(+ ,a ...) (crush+ (map tree-crusher a))]
+    [`(* ,a ...) (crush* (map tree-crusher a))]
+    [`(^ ,a ,b) `(^ ,(tree-crusher a) ,(tree-crusher b))]
+    [x x]))
+
+(define (compress-chains parsed)
+  (define (compress+ args)
+    (let [(val (foldl (lambda (args acc)
+                        (match args
+                          [(? number? n) `(,(+ (car acc) n) ,(cadr acc))]
+                          [x `(,(car acc) ,(append (cadr acc) (list x)))]))
+                      '(0 ()) args))]
+      (match val
+        [`(0 ,vars) `(+ ,@vars)]
+        [`(,n ()) n]
+        [`(,n ,vars) `(+ ,n ,@vars)])))
+  
+  (match parsed
+    [`(+ ,a ...) (compress+ (map compress-chains a))]
+    [`(* ,a ...) `(* ,@(map compress-chains a))] ;TODO
+    [`(^ ,a ...) `(^ ,@(map compress-chains a))] ;TODO...?
+    [x x]))
+
+;-------------------
+; INPUT YAYAY
+;-------------------
+(define (str->tree str)
+  (let [(input (open-input-string str))]
+    (let [(lexed (lambda () (arith-lexer input)))]
+      (let [(parsed (arith-parser lexed))]
+        (pretty-write parsed)
+        (let [(unary-stripped (elim-unary parsed))]
+          (pretty-write unary-stripped)
+          (let [(min-div-stripped (elim-minus-div unary-stripped))]
+            (pretty-write min-div-stripped)
+            (let [(crushed (tree-crusher min-div-stripped))]
+              (pretty-write crushed)
+              (let [(compressed (compress-chains crushed))]
+                (pretty-write compressed)))))))))
 
 ;--------------
 ; TESTS
