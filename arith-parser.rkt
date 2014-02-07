@@ -184,13 +184,31 @@
                       '(0 ()) args))]
       (match val
         [`(0 ,vars) `(+ ,@vars)]
+        [`(0 (,x)) x]
         [`(,n ()) n]
         [`(,n ,vars) `(+ ,n ,@vars)])))
   
+  (define (compress* args)
+    (let [(val (foldl (lambda (args acc)
+                        (match args
+                          [(? number? n) `(,(* (car acc) n) ,(cadr acc))]
+                          [x `(,(car acc) ,(append (cadr acc) (list x)))]))
+                      '(1 ()) args))]
+      (match val
+        [`(1 ,vars) `(* ,@vars)]
+        [`(1 (,x)) x]
+        [`(,n ()) n]
+        [`(,n ,vars) `(* ,n ,@vars)])))
+  
+  (define (compress^ args)
+    (match args
+      [`(,(? number? a) ,(? number? b)) (expt a b)]
+      [`(,a ,b) `(^ ,a ,b)]))
+  
   (match parsed
     [`(+ ,a ...) (compress+ (map compress-chains a))]
-    [`(* ,a ...) `(* ,@(map compress-chains a))] ;TODO
-    [`(^ ,a ...) `(^ ,@(map compress-chains a))] ;TODO...?
+    [`(* ,a ...) (compress* (map compress-chains a))]
+    [`(^ ,a ...) (compress^ (map compress-chains a))]
     [x x]))
 
 ;-------------------
