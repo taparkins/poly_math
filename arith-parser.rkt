@@ -204,61 +204,76 @@
 
 (define (compress-chains parsed)
   (define (compress+ args)
-    (let [(val (foldl (lambda (arg acc)
-                        (let [(int-val (car acc))
-                              (mlt-val (cadr acc))]
-                          (match arg
-                            [(? number? n)
-                             ; =>
-                             `(,(+ int-val n) ,mlt-val)]
-                            [`(* ,y ... ,(? number? k) ,x ...)
-                             ; =>
-                             `(,int-val ,(foldl (lambda (x acc) 
-                                                  (hash-set mlt-val x (+ (hash-ref mlt-val x 0) k)))
-                                                (cadr acc) (append y x)))]
-                            [x 
-                             ; =>
-                             `(,int-val ,(hash-set mlt-val x (+ (hash-ref mlt-val x 0) 1)))])))
-                      `(0 ,#hash()) args))]
+    (define (build+hash arg acc)
+      (let [(int-val (car acc))
+            (mlt-val (cadr acc))]
+        (match arg
+          [(? number? n)
+           ; =>
+           `(,(+ int-val n) ,mlt-val)]
+          [`(* ,y ... ,(? number? k) ,x ...)
+           ; =>
+           `(,int-val ,(hash-set mlt-val `(* ,@(append y x)) (+ (hash-ref mlt-val `(* ,@(append y x)) 0) k)))]
+          [`(* ,x ...)
+           ; =>
+           `(,int-val ,(hash-set mlt-val `(* ,@x) (+ (hash-ref mlt-val `(* ,@x) 0) 1)))]
+          [x 
+           ; =>
+           `(,int-val ,(hash-set mlt-val x (+ (hash-ref mlt-val x 0) 1)))])))
+    (define (decode+hash key val)
+      (match val
+        [0 `0]
+        [1 key]
+        [n
+         ; =>
+         (match key
+           [`(* ,x ...) `(* ,n ,@x)]
+           [key `(* ,n ,key)])]))
+          
+    (let [(val (foldl build+hash `(0 ,#hash()) args))]
       (let [(int-val (car val)) 
             (mlt-val 
              (filter
               (lambda (x) (not (= (cadr x) 0)))
               (match (cadr val)
                 [(hash-table (key val) ...) (map list key val)])))]
-        (cond
-          [(= int-val 0)
-           ; =>
-           (match mlt-val
-             ['() 0]
-             [`((,key ,val)) `(* ,val ,key)]
-             [`((,key ,val) ...) `(+ ,@(map (lambda (a b)
-                                              `(* ,b ,a))
-                                            key val))])]
-          [else
-           ; =>
-           (match mlt-val
-             ['() int-val]
-             [`((,key ,val) ...) `(+ ,int-val ,@(map (lambda (a b)
-                                                       `(* ,b ,a))
-                                                     key val))])]))))
-  
+        (match int-val
+          [0 (match mlt-val
+               ['() 0]
+               [`((,key ,val)) (decode+hash key val)]
+               [`(,entries ...) `(+ ,@(foldr append '() (map (lambda (x) (list (decode+hash (car x) (cadr x)))) entries)))])]
+          [n (match mlt-val
+               ['() n]
+               [`((,key ,val)) `(+ ,n ,(decode+hash key val))]
+               [`(,entries ...) `(+ ,n ,@(foldr append '() (map (lambda (x) (list (decode+hash (car x) (cadr x)))) entries)))])]))))
+
   (define (compress* args)
-    (let [(val (foldl 
-                (lambda (arg acc)
-                  (let [(int-val (car acc))
-                        (exp-val (cadr acc))]
-                        (match arg
-                          [(? number? n) 
-                           ; =>
-                           `(,(* int-val n) ,exp-val)]
-                          [`(^ ,x ,(? number? y))
-                           ; =>
-                           `(,int-val ,(hash-set exp-val x (+ (hash-ref exp-val x 0) y)))]
-                          [x
-                           ; =>
-                           `(,int-val ,(hash-set exp-val x (+ (hash-ref exp-val x 0) 1)))])))
-                      `(1 ,#hash()) args))]
+    (define (build*hash arg acc)
+      (let [(int-val (car acc))
+            (exp-val (cadr acc))]
+        (match arg
+          [(? number? n) 
+           ; =>
+           `(,(* int-val n) ,exp-val)]
+          [`(^ ,x ,(? number? y))
+           ; =>
+           `(,int-val ,(hash-set exp-val x (+ (hash-ref exp-val x 0) y)))]
+          [x
+           ; =>
+           `(,int-val ,(hash-set exp-val x (+ (hash-ref exp-val x 0) 1)))])))
+    (define (decode*hash key val)
+      (match val
+        [0 `1]
+        [1 key]
+        [n
+         ;=>
+         (match key
+           [`(^ ,x (+ ,y ...)) `(^ ,x ,(compress+ `(* ,n (+ ,@y))))]
+           [`(^ ,x (* ,y ...)) `(^ ,x ,(compress* `(* ,n ,@y)))]
+           [`(^ ,x ,(? number? y)) `(^ ,x ,(* n y))]
+           [`(^ ,x ,y) `(^ ,x ,(compress-chains `(* ,n ,y)))]
+           [x `(^ ,x ,n)])]))
+    (let [(val (foldl build*hash `(1 ,#hash()) args))]
       (let [(int-val (car val))
             (exp-val 
              (filter
@@ -271,15 +286,11 @@
            (match exp-val
              ['() 1]
              [`((,key ,val)) `(^ ,key ,val)]
-             [`((,key ,val) ...) `(* ,@(map (lambda (a b)
-                                              `(^ ,a ,b))
-                                            key val))])]
+             [`(,entries ...) `(* ,@(foldr append '() (map (lambda (x) (list (decode*hash (car x) (cadr x)))) entries)))])]
           [else
            (match exp-val
              ['() int-val]
-             [`((,key ,val) ...) `(* ,int-val ,@(map (lambda (a b)
-                                                       `(^ ,a ,b))
-                                                     key val))])]))))
+             [`(,entries ...) `(* ,int-val ,@(foldr append '() (map (lambda (x) (list (decode*hash (car x) (cadr x)))) entries)))])]))))
 ;      (match val
 ;        [`(1 ,(hash-table (key 1)) x]
 ;        [`(1 ,(hash-table (key val) ...)) `(* ,@(map (lambda (a b)
@@ -290,13 +301,13 @@
   (define (compress^ args)
     (match args
       [`(,(? number? a) ,(? number? b)) (expt a b)]
-      ;[`((^ ,x ,y) ,z) `(^ ,x ,(compress-chains `(* ,y ,z)))]
+      [`((^ ,x ,y) ,z) `(^ ,x ,(compress-chains `(* ,y ,z)))]
       [`(,a ,b) `(^ ,a ,b)]))
   
   (match parsed
     [`(+ ,a ...) (compress+ (map compress-chains a))]
     [`(* ,a ...) (compress* (map compress-chains a))]
-    [`(^ ,a ...) (compress^ (map compress-chains a))]
+    [`(^ ,a ...) (compress^ (map compress-chains a))] ; NOTE: a should have precisely 2 elements in all cases here
     ;[(? symbol? x) `(^ ,x 1)]
     [x x]))
 
