@@ -341,6 +341,11 @@
                   (pretty-write compressed))))))))))
 
 ;--------------
+; EXPORT
+;--------------
+(provide str->tree)
+
+;--------------
 ; TESTS
 ;--------------
 (define (lex-it! input) (lambda () (arith-lexer (open-input-string input))))
