@@ -161,14 +161,14 @@
   
   (define (distribute^ args)
     (match args
-      [`(,x ,(? number? n))
+      [`(,x ,(? (lambda (_) (and (number? _) (> _ 0))) n))
        ; =>
        (define (expt n acc)
          (cond
            [(= n 0) acc]
-           [(< n 0) 1]
+           [(< n 0) `(^ ,x ,n)]
            [else (expt (- n 1) (cons '* (cons x `(,acc))))]))
-       (expt (- n 1) x)]
+       (distribute (expt (- n 1) x))]
       [`(,a ,b) `(^ ,a ,b)]))
   
   (match parsed
